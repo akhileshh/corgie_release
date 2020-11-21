@@ -9,13 +9,16 @@ from corgie.boundingcube import BoundingCube
 from corgie.layers.base import register_layer_type, BaseLayerType
 from corgie import helpers
 
+
 def get_extra_interpolate_parameters():
     # torch.nn.function.interpolate complains if this
     # argument is not provided, but it doesn't exist in older versions
     from packaging import version
+
     if version.parse(torch.__version__) <= version.parse("1.4.0"):
         return {}
     return {"recompute_scale_factor": False}
+
 
 class VolumetricLayer(BaseLayerType):
     def __init__(self, data_mip=None, **kwargs):
@@ -26,15 +29,16 @@ class VolumetricLayer(BaseLayerType):
         indexed_bcube = self.indexing_scheme(bcube, mip, kwargs)
         if self.data_mip is not None:
             if mip <= self.data_mip:
-                result_data_mip = super().read(bcube=indexed_bcube,
-                        mip=self.data_mip, **kwargs)
+                result_data_mip = super().read(
+                    bcube=indexed_bcube, mip=self.data_mip, **kwargs
+                )
                 result = result_data_mip
                 for _ in range(mip, self.data_mip):
                     result = self.get_upsampler()(result)
             else:
                 result_raw = super().read(bcube=indexed_bcube, mip=mip, **kwargs)
                 result = torch.zeros_like(result_raw, device=result_raw.device)
-                #raise exceptions.CorgieException(f"Attempting to read from higher MIP (MIP {mip}) "
+                # raise exceptions.CorgieException(f"Attempting to read from higher MIP (MIP {mip}) "
                 #        f"than the declared data MIP (MIP {self.data_mip}) for {str(self)}")
         else:
             result = super().read(bcube=indexed_bcube, mip=mip, **kwargs)
@@ -48,9 +52,18 @@ class VolumetricLayer(BaseLayerType):
     def indexing_scheme(self, bcube, mip, kwargs):
         return bcube
 
-    def break_bcube_into_chunks(self, bcube, chunk_xy, chunk_z,
-            mip, flatten=True, chunk_xy_step=None, chunk_z_step=None,
-            **kwargs):
+    def break_bcube_into_chunks(
+        self,
+        bcube,
+        chunk_xy,
+        chunk_z,
+        mip,
+        flatten=True,
+        chunk_xy_step=None,
+        chunk_z_step=None,
+        lazy=False,
+        **kwargs
+    ):
         """Default breaking up of a bcube into smaller bcubes (chunks).
         Returns a list of chunks
         Args:
@@ -76,14 +89,13 @@ class VolumetricLayer(BaseLayerType):
             for xs in range(x_range[0], x_range[1], chunk_xy_step):
                 xy_chunks[-1].append([])
                 for ys in range(y_range[0], y_range[1], chunk_xy_step):
-                    chunk = BoundingCube(xs, xs + chunk_xy,
-                                         ys, ys + chunk_xy,
-                                         zs, zs + chunk_z,
-                                         mip=mip)
-
+                    chunk = BoundingCube(
+                        xs, xs + chunk_xy, ys, ys + chunk_xy, zs, zs + chunk_z, mip=mip
+                    )
                     xy_chunks[-1][-1].append(chunk)
                     flat_chunks.append(chunk)
-
+                    if flatten and lazy:
+                        yield chunk
         if flatten:
             return flat_chunks
         else:
@@ -98,37 +110,45 @@ class ImgLayer(VolumetricLayer):
 
     def get_downsampler(self):
         def downsampler(data_tens):
-            return torch.nn.functional.interpolate(data_tens.float(),
-                    mode='bilinear',
-                    scale_factor=1/2,
-                    align_corners=False,
-                    **get_extra_interpolate_parameters())
+            return torch.nn.functional.interpolate(
+                data_tens.float(),
+                mode="bilinear",
+                scale_factor=1 / 2,
+                align_corners=False,
+                **get_extra_interpolate_parameters()
+            )
+
         return downsampler
 
     def get_upsampler(self):
         def upsampler(data_tens):
-            return torch.nn.functional.interpolate(data_tens.float(),
-                    mode='bilinear',
-                    scale_factor=2.0,
-                    align_corners=False,
-                    **get_extra_interpolate_parameters())
+            return torch.nn.functional.interpolate(
+                data_tens.float(),
+                mode="bilinear",
+                scale_factor=2.0,
+                align_corners=False,
+                **get_extra_interpolate_parameters()
+            )
+
         return upsampler
 
     def get_num_channels(self, *args, **kwargs):
         return self.num_channels
 
     def get_default_data_type(self):
-        return 'uint8'
+        return "uint8"
 
 
 @register_layer_type("segmentation")
 class SegmentationLayer(VolumetricLayer):
     def __init__(self, *args, num_channels=1, **kwargs):
         if num_channels != 1:
-            raise exceptions.ArgumentError("Segmentation layer 'num_channels'",
-                    "Segmentation layer must have 1 channels. 'num_channels' provided: {}".format(
-                        num_channels
-                        ))
+            raise exceptions.ArgumentError(
+                "Segmentation layer 'num_channels'",
+                "Segmentation layer must have 1 channels. 'num_channels' provided: {}".format(
+                    num_channels
+                ),
+            )
         super().__init__(*args, **kwargs)
 
     def read(self, dtype=None, **kwargs):
@@ -136,22 +156,26 @@ class SegmentationLayer(VolumetricLayer):
 
     def get_downsampler(self):
         def downsampler(data_tens):
-            downs_data = torch.nn.functional.interpolate(data_tens.float(),
-                                mode='nearest',
-                                scale_factor=1/2,
-                                align_corners=False,
-                                **get_extra_interpolate_parameters())
+            downs_data = torch.nn.functional.interpolate(
+                data_tens.float(),
+                mode="nearest",
+                scale_factor=1 / 2,
+                align_corners=False,
+                **get_extra_interpolate_parameters()
+            )
             return downs_data
 
         return downsampler
 
     def get_upsampler(self):
         def upsampler(data_tens):
-            ups_data = torch.nn.functional.interpolate(data_tens.float(),
-                                mode='nearest',
-                                scale_factor=2.0,
-                                align_corners=False,
-                                **get_extra_interpolate_parameters())
+            ups_data = torch.nn.functional.interpolate(
+                data_tens.float(),
+                mode="nearest",
+                scale_factor=2.0,
+                align_corners=False,
+                **get_extra_interpolate_parameters()
+            )
             return ups_data
 
         return upsampler
@@ -160,38 +184,44 @@ class SegmentationLayer(VolumetricLayer):
         return 1
 
     def get_default_data_type(self):
-        return 'uint64'
+        return "uint64"
 
 
 @register_layer_type("field")
 class FieldLayer(VolumetricLayer):
     def __init__(self, *args, num_channels=2, **kwargs):
         if num_channels != 2:
-            raise exceptions.ArgumentError("Field layer 'num_channels'",
-                    "Field layer must have 2 channels. 'num_channels' provided: {}".format(
-                        num_channels
-                        ))
+            raise exceptions.ArgumentError(
+                "Field layer 'num_channels'",
+                "Field layer must have 2 channels. 'num_channels' provided: {}".format(
+                    num_channels
+                ),
+            )
         super().__init__(*args, **kwargs)
 
     def get_downsampler(self):
         def downsampler(data_tens):
 
-            downs_data = torch.nn.functional.interpolate(data_tens.float(),
-                                mode='bilinear',
-                                scale_factor=1/2,
-                                align_corners=False,
-                                **get_extra_interpolate_parameters())
+            downs_data = torch.nn.functional.interpolate(
+                data_tens.float(),
+                mode="bilinear",
+                scale_factor=1 / 2,
+                align_corners=False,
+                **get_extra_interpolate_parameters()
+            )
             return downs_data * 0.5
 
         return downsampler
 
     def get_upsampler(self):
         def upsampler(data_tens):
-            ups_data = torch.nn.functional.interpolate(data_tens.float(),
-                                mode='bilinear',
-                                scale_factor=2.0,
-                                align_corners=False,
-                                **get_extra_interpolate_parameters())
+            ups_data = torch.nn.functional.interpolate(
+                data_tens.float(),
+                mode="bilinear",
+                scale_factor=2.0,
+                align_corners=False,
+                **get_extra_interpolate_parameters()
+            )
             return ups_data * 2
 
         return upsampler
@@ -200,19 +230,20 @@ class FieldLayer(VolumetricLayer):
         return 2
 
     def get_default_data_type(self):
-        return 'float32'
+        return "float32"
 
 
 @register_layer_type("mask")
 class MaskLayer(VolumetricLayer):
-    def __init__(self, binarization=None,
-            num_channels=1, **kwargs):
+    def __init__(self, binarization=None, num_channels=1, **kwargs):
         self.binarizer = helpers.Binarizer(binarization)
         if num_channels != 1:
-            raise exceptions.ArgumentError("Mask layer 'num_channels'",
-                    "Mask layer must have 1 channels. 'num_channels' provided: {}".format(
-                        num_channels
-                        ))
+            raise exceptions.ArgumentError(
+                "Mask layer 'num_channels'",
+                "Mask layer must have 1 channels. 'num_channels' provided: {}".format(
+                    num_channels
+                ),
+            )
         super().__init__(**kwargs)
 
     def read(self, **kwargs):
@@ -223,21 +254,26 @@ class MaskLayer(VolumetricLayer):
     def get_downsampler(self):
         def downsampler(data_tens):
             return torch.nn.functional.max_pool2d(data_tens.float(), kernel_size=2)
+
         return downsampler
 
     def get_upsampler(self):
         def upsampler(data_tens):
-            return torch.nn.functional.interpolate(data_tens.float(),
-                    mode='nearest',
-                    scale_factor=2.0,
-                    **get_extra_interpolate_parameters())
+            return torch.nn.functional.interpolate(
+                data_tens.float(),
+                mode="nearest",
+                scale_factor=2.0,
+                **get_extra_interpolate_parameters()
+            )
+
         return upsampler
 
     def get_num_channels(self, *args, **kwargs):
         return 1
 
     def get_default_data_type(self):
-        return 'uint8'
+        return "uint8"
+
 
 @register_layer_type("section_value")
 class SectionValueLayer(VolumetricLayer):
@@ -252,10 +288,10 @@ class SectionValueLayer(VolumetricLayer):
 
     def indexing_scheme(self, bcube, mip, kwargs):
         new_bcube = copy.deepcopy(bcube)
-        if 'channel_start' in kwargs and 'channel_end' in kwargs:
-            channel_start = kwargs['channel_start']
-            channel_end = kwargs['channel_end']
-            del kwargs['channel_start'], kwargs['channel_end']
+        if "channel_start" in kwargs and "channel_end" in kwargs:
+            channel_start = kwargs["channel_start"]
+            channel_end = kwargs["channel_end"]
+            del kwargs["channel_start"], kwargs["channel_end"]
         else:
             channel_start = 0
             channel_end = self.num_channels
@@ -270,4 +306,4 @@ class SectionValueLayer(VolumetricLayer):
         return False
 
     def get_default_data_type(self):
-        return 'float32'
+        return "float32"
